@@ -1,140 +1,111 @@
-Here is a detailed section-by-section documentation for the provided program:
+# `compute.c` Program Documentation
 
----
+## Overview
+The `compute.c` program is designed to search for perfect numbers within a specified range using shared memory and inter-process communication. It is part of a larger system that includes multiple processes, each of which tests candidate numbers for perfection. The program leverages shared memory to keep track of which numbers have been tested and communicates results to a manager process using message queues. Signals are used to handle termination and clean up the process state.
 
-### **Includes and Global Declarations**
-```c
-#include "defs.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <sys/sem.h>
-#include <sys/shm.h>
-#include <sys/types.h>
+### Key Features:
+- **Shared Memory**: Used to track the status of tested numbers and store process statistics.
+- **Message Queues**: For inter-process communication (IPC) with a manager process, such as sending perfect number discoveries and handling initialization.
+- **Signal Handling**: Custom signal handling is used to gracefully clean up the process state upon termination.
+- **Perfect Number Testing**: Each candidate number is tested to determine whether it is a perfect number (i.e., the sum of its divisors equals the number itself).
+
+## Dependencies
+- `hw4.h`: This header file defines necessary constants, structures, and IPC keys like `SM_KEY`, `MQ_KEY`, and other project-specific macros.
+- **System Libraries**:
+  - `<signal.h>`: For signal handling.
+  - `<sys/shm.h>`: For shared memory management.
+  - `<sys/msg.h>`: For message queue management.
+  - `<errno.h>`: For handling system errors.
+  - `<stdlib.h>`, `<stdio.h>`, `<string.h>`, `<stdbool.h>`: For standard I/O, memory allocation, string manipulation, and boolean support.
+
+## Data Structures
+- `segment *memory`: A pointer to the shared memory segment that stores process information and a bitmap for tracking tested numbers.
+- `msg`: A structure used for message communication between this program and the manager process.
+- Various integer variables are used for process ID (`pid`), message queue ID (`mqid`), shared memory ID (`smid`), and the candidate index (`cp_index`).
+
+## Functions
+
+### `void cp_handler(int signum)`
+This function handles termination signals (`SIGINT`, `SIGQUIT`, `SIGHUP`). When the program receives any of these signals, this handler is invoked to reset the process information in shared memory and terminate the process cleanly.
+- **Parameters**: 
+  - `int signum`: The signal number.
+- **Effect**: Resets the process's shared memory slot, clearing its PID and statistics, then exits the program.
+
+### `int whichSeg(int cand)`
+Calculates the index of the shared memory segment corresponding to a candidate number.
+- **Parameters**: 
+  - `int cand`: The candidate number being tested.
+- **Returns**: The index of the shared memory segment containing the bitmap for this candidate.
+
+### `int whichInt(int cand)`
+Calculates the index of the integer in the bitmap array that contains the bit corresponding to the candidate number.
+- **Parameters**: 
+  - `int cand`: The candidate number being tested.
+- **Returns**: The index of the integer in the bitmap that contains the bit for this candidate.
+
+### `int whichBit(int cand)`
+Calculates the bit position within an integer that corresponds to a candidate number.
+- **Parameters**: 
+  - `int cand`: The candidate number.
+- **Returns**: The bit position within the integer that represents the candidate.
+
+### `int test(int cand)`
+Tests if a given candidate number is a perfect number. A perfect number is a number that is equal to the sum of its proper divisors.
+- **Parameters**: 
+  - `int cand`: The candidate number to test.
+- **Returns**: 
+  - `1` if the candidate is a perfect number.
+  - `0` otherwise.
+
+### `int tested(int cand)`
+Checks whether a candidate number has already been tested by inspecting the corresponding bit in the shared memory bitmap.
+- **Parameters**: 
+  - `int cand`: The candidate number.
+- **Returns**: 
+  - Non-zero if the candidate has already been tested.
+  - `0` if the candidate has not been tested.
+
+## Main Program Flow
+1. **Initialization**: 
+   - The program begins by verifying that the correct number of arguments is provided (only one argument is expected—the starting number for candidate testing). 
+   - It checks that the starting number is within a valid range (`2 <= start <= 33554432`).
+   
+2. **Shared Memory and Message Queue Setup**:
+   - The program attempts to attach to shared memory and the message queue, both of which are essential for inter-process communication.
+   - Upon successful connection, the program sends an initialization message to the manager process, which assigns a unique index (`cp_index`) for this process.
+
+3. **Signal Handling**:
+   - Custom signal handling is set up using `sigaction`, where signals (`SIGINT`, `SIGQUIT`, `SIGHUP`) are caught and processed by `cp_handler` to ensure graceful cleanup.
+
+4. **Candidate Testing Loop**:
+   - The program enters a loop where it tests candidate numbers starting from the specified `start` value.
+   - For each candidate, it checks whether the number has been tested by inspecting the bitmap in shared memory.
+     - If the candidate has not been tested:
+       - It marks the candidate as tested in shared memory.
+       - It tests whether the candidate is a perfect number using the `test` function.
+       - If the candidate is a perfect number, it sends a message to the manager process indicating the discovery.
+     - If the candidate has already been tested, it increments the skipped count for this process in shared memory.
+   - The loop continues testing numbers until the maximum range (`33554432`) is reached, after which the process terminates.
+
+5. **Termination**:
+   - When the candidate reaches the maximum range, the program resets to the starting position and calls `cp_handler` to handle cleanup and exit.
+
+## Error Handling
+- The program checks for various errors during execution, such as:
+  - Invalid argument count or starting number.
+  - Failure to attach to shared memory or message queues, which triggers an error message and program exit.
+  - Failure to send or receive messages, which also triggers an error message and program exit.
+
+## Usage
+```bash
+./compute start_number
 ```
-- **Purpose**: This section includes necessary system libraries and headers for performing inter-process communication (IPC), synchronization, and signal handling. These libraries provide access to low-level system operations:
-  - `stdio.h`: Standard input/output functions (e.g., `printf`, `fprintf`).
-  - `stdlib.h`: General utilities, including dynamic memory management and process control.
-  - `string.h`: String manipulation functions.
-  - `unistd.h`: Provides access to the POSIX API, such as file operations and process control.
-  - `signal.h`: Signal handling functions for asynchronous event processing.
-  - `sys/ipc.h`, `sys/msg.h`, `sys/sem.h`, `sys/shm.h`, `sys/types.h`: System headers to support IPC mechanisms like message queues, semaphores, and shared memory.
-  
-- **Global Variables**:
-  - `Index`: This variable stores the index of the current process in the shared memory's process structure.
-  - `MsgQ_ID`: Message queue identifier used for communication between processes.
-  - `Semaphore_ID`: Semaphore identifier used for controlling access to shared resources.
-  - `UNLOCK_SEM`, `LOCK_SEM`: Constants defining semaphore operations for unlocking and locking respectively.
-  - `TERMINATED_OPT`: A flag that determines if the process should terminate gracefully when signaled.
-  
-- **Data Structures**:
-  - `messageQueueStruct`: A structure for message queue communication. Contains:
-    - `type`: Indicates the type of message (e.g., 1 for PID, 2 for a perfect number, 3 for termination).
-    - `data`: Holds the actual data to be transmitted, such as a PID or a number.
-  - `sharedMemoryInfoStruct`: A pointer to a `SharedMemoryStruct` which represents the shared memory used for inter-process communication (defined elsewhere in the `defs.h` file).
-
----
-
-### **Semaphore_Operation Function**
-```c
-void Semaphore_Operation(int Semaphore_ID, int operation)
+- `start_number`: The number from which the candidate testing begins.
+- Example:
+```bash
+./compute 5000
 ```
-- **Purpose**: This function performs semaphore operations like locking or unlocking, which are essential for coordinating access to shared resources (e.g., shared memory) among multiple processes. Semaphores ensure that only one process can modify shared data at a time, preventing race conditions.
-  
-- **Parameters**:
-  - `Semaphore_ID`: The unique identifier of the semaphore set used for synchronization.
-  - `operation`: Specifies the semaphore operation, either `LOCK_SEM` (-1) for locking or `UNLOCK_SEM` (1) for unlocking.
-  
-- **Details**:
-  - A `sembuf` structure is used to define the semaphore operation. The operation is passed through `semop`, a system call that performs atomic changes on the semaphore set.
-  - If the semaphore operation fails (returns -1), an error message is printed, and the program exits. This ensures proper error handling for critical synchronization tasks.
-  - The operation's name (lock/unlock) is stored in `operationName` for more informative error messages.
 
----
-
-### **Semaphore_Lock & Semaphore_Unlock Functions**
-```c
-void Semaphore_Lock(int Semaphore_ID)
-void Semaphore_Unlock(int Semaphore_ID)
-```
-- **Purpose**: These are wrapper functions that simplify semaphore locking and unlocking. They call `Semaphore_Operation` with predefined constants (`LOCK_SEM` or `UNLOCK_SEM`).
-  
-- **Details**:
-  - `Semaphore_Lock` calls `Semaphore_Operation` with `LOCK_SEM`, ensuring exclusive access to the shared resource.
-  - `Semaphore_Unlock` calls `Semaphore_Operation` with `UNLOCK_SEM`, allowing other processes to access the shared resource.
-  - By encapsulating semaphore operations in these functions, the code is more readable and easier to maintain.
-
----
-
-### **C_Signal_Handler Function**
-```c
-void C_Signal_Handler(int signalNumber)
-```
-- **Purpose**: Handles termination signals (`SIGINT`, `SIGHUP`, `SIGQUIT`) that may be sent to the process. This function ensures that the process can terminate cleanly and that shared resources (e.g., shared memory and semaphore) are properly released or updated.
-
-- **Details**:
-  - **Signal Handling**: Upon receiving a signal, the function first ignores further occurrences of the signal using `signal(signalNumber, SIG_IGN)` to prevent recursive signal handling.
-  - **Termination Message**: If `TERMINATED_OPT` is set and the process has not yet terminated, the handler sends a termination message (message type 3) with the current process's index (`Index`) to the manager through the message queue.
-  - **Shared Memory Cleanup**: If the process PID matches the entry in the shared memory's process structure, it resets its counters (`FoundCounter`, `SkippedCounter`, `TestedCounter`) and PID to indicate that the process is no longer active.
-  - **Error Handling**: If the PID does not match, an error is printed, indicating a mismatch in the process index.
-  - The function calls `exit(0)` to terminate the process gracefully.
-
----
-
-### **Find_PerfectNums Function**
-```c
-int Find_PerfectNums(long start, int MsgQ_ID)
-```
-- **Purpose**: This function finds and reports perfect numbers starting from a given number (`start`). A perfect number is a number equal to the sum of its proper divisors (excluding itself). The function uses shared memory to store checked numbers and processes and communicates perfect numbers to a manager via the message queue.
-
-- **Parameters**:
-  - `start`: The number to start checking for perfect numbers.
-  - `MsgQ_ID`: The message queue identifier used to send perfect numbers to the manager process.
-  
-- **Details**:
-  - **Bitmap Checking**: Uses a bitmap stored in shared memory to track whether a number has already been checked. If the number is marked, it is skipped.
-  - **Perfect Number Calculation**: For each unmarked number, the function calculates the sum of its divisors. If the sum equals the number, it is identified as a perfect number.
-  - **Message Queue Communication**: Found perfect numbers are sent to the manager by constructing a `messageQueueStruct` with type 2 (for perfect numbers) and sending it via the message queue.
-  - **Bitmap Update**: Once a number is checked, it is marked in the bitmap to avoid rechecking.
-  - **Counters**: The function updates the `FoundCounter` for perfect numbers found and the `TestedCounter` for numbers checked.
-  - **Execl Call**: When all numbers are checked, the program replaces itself with the `report` program using `execl`. If this fails, the program returns `-1`.
-
----
-
-### **main Function**
-```c
-int main(int argc, char *argv[])
-```
-- **Purpose**: This is the entry point of the program. It handles the initialization of IPC mechanisms (message queue, semaphore, shared memory), argument parsing, and process indexing. The main function eventually calls `Find_PerfectNums` to start searching for perfect numbers.
-
-- **Details**:
-  1. **Message Queue Initialization**: 
-     - Creates a message queue using `msgget`. If it fails, an error message is printed, and the program exits.
-  2. **Signal Registration**: 
-     - Registers `C_Signal_Handler` for `SIGINT`, `SIGHUP`, and `SIGQUIT` to handle termination requests.
-  3. **Argument Parsing**:
-     - Uses `getopt` to parse command-line options. If the arguments are incorrect, it prints the correct usage (`SYNOPSIS`) and exits. The program expects exactly one argument, which is the starting number for checking perfect numbers.
-  4. **PID Communication**:
-     - Sends the process's PID to the manager through the message queue, indicating that this process is active and ready to compute perfect numbers.
-  5. **Shared Memory and Semaphore Setup**:
-     - Initializes the semaphore using `semget` and attaches the shared memory segment with `shmat`. If any of these operations fail, the program prints an error message and exits.
-  6. **Semaphore Locking and Process Indexing**:
-     - Locks the semaphore to prevent race conditions and then searches for the current process's PID in the shared memory's process structure. If no matching PID is found, the program exits with an error.
-  7. **Perfect Number Search**:
-     - Calls `Find_PerfectNums` with the starting number and message queue ID to begin searching for perfect numbers.
-  
-- **Error Handling**:
-  - The program provides comprehensive error handling at every stage, ensuring that IPC mechanisms (semaphore, message queue, shared memory) are correctly initialized, and that proper resources are released upon termination.
-
----
-
-### **Inter-Process Communication and Synchronization**
-- **Message Queue**: The program uses a message queue to communicate with a manager process. Messages include the process's PID (for registration) and any found perfect numbers.
-- **Shared Memory**: A shared memory segment is used to store global information such as the bitmap of checked numbers and process-specific counters (e.g., `FoundCounter`, `SkippedCounter`, `TestedCounter`).
-- **Semaphores**: Semaphores are used to control access to shared memory, ensuring that only one process can modify shared memory structures at a time, preventing data races.
-
----
+## Limits
+- The program tests numbers in the range `2 <= start <= 33554432`.
+- If the `start_number` is outside this range, the program exits with an error message.

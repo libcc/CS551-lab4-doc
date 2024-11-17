@@ -1,165 +1,97 @@
-### Section by Section Documentation
+# `report.c` - Documentation
 
-#### Header Inclusions:
-```c
-#include "defs.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <sys/sem.h>
-#include <sys/shm.h>
-#include <sys/types.h>
+## Overview
+
+This C program, `report.c`, is part of a system that manages processes involved in finding perfect numbers. It connects to shared memory and a message queue, both set up by another program (`manage.c`), to monitor and report the status of running processes. The program also has the ability to send termination signals to all active processes.
+
+The program performs the following main tasks:
+1. Retrieves and displays the perfect numbers found so far.
+2. Summarizes the performance of currently running processes (i.e., how many numbers they have tested, perfect numbers they have found, and numbers they have skipped).
+3. Optionally, it can send a termination signal to all running processes if the `-k` argument is provided.
+
+## Global Variables
+
+- `smid`: Shared memory ID obtained through `shmget()`.
+- `mqid`: Message queue ID obtained through `msgget()`.
+- `total_tested`: Accumulates the total number of numbers tested by all running processes.
+- `total_found`: Accumulates the total number of perfect numbers found by all running processes.
+- `total_skipped`: Accumulates the total number of skipped numbers by all running processes.
+- `pid`: Stores the process ID of each running process when iterating over processes in shared memory.
+- `p_tested`, `p_found`, `p_skipped`: Store the number of tested, found, and skipped numbers for each individual process.
+- `memory`: Pointer to the shared memory segment, which contains process statistics and perfect numbers.
+
+## Functions
+
+### `main(int argc, char *argv[])`
+
+#### Purpose
+
+The main function performs the following tasks:
+1. **Accesses shared memory and message queue**: The program attaches to the shared memory segment and the message queue created by `manage.c`. These contain the statistics of processes and perfect numbers found.
+2. **Kill processes (if `-k` flag is used)**: If the program is executed with the `-k` flag, it sends a termination signal to all running processes.
+3. **Displays perfect numbers**: The program prints all the perfect numbers found so far from shared memory.
+4. **Displays running process statistics**: For each active process, the program displays its PID, how many numbers it has tested, how many perfect numbers it has found, and how many numbers it has skipped.
+5. **Summarizes total statistics**: It also computes and prints the total numbers tested, perfect numbers found, and numbers skipped across all running processes.
+
+#### Detailed Steps
+
+1. **Memory and Queue Initialization**:
+    - The program retrieves the shared memory segment ID using `shmget(SM_KEY, sizeof(segment), 0)`. If it fails, an error message is printed, and the program exits.
+    - The shared memory is then attached using `shmat()`. If this fails, an error message is printed, and the program exits.
+    - The program retrieves the message queue ID using `msgget(MQ_KEY, 0)`. If this fails, an error message is printed, and the program exits.
+
+2. **Handling the `-k` Flag**:
+    - If the `-k` flag is passed as an argument (`strcmp(argv[1], "-k") == 0`), the program sends a termination message (`KILL_FLAG`) to all active processes.
+    - The program iterates over the shared memory process table (`memory->process`), checking each process's PID. For each active process, it sends a `KILL_FLAG` message using `msgsnd()`. The loop breaks when it encounters a process with a PID of 0 (indicating no more active processes).
+
+3. **Displaying Perfect Numbers**:
+    - The program prints the perfect numbers found so far by iterating through `memory->result`. It stops printing once it encounters a `0` in the array, which indicates the end of the list of perfect numbers.
+
+4. **Displaying Process Statistics**:
+    - The program iterates through the process table in shared memory, printing the statistics (tested, found, skipped numbers) for each active process. It also accumulates these values into `total_tested`, `total_found`, and `total_skipped` to provide a summary.
+    - For each process:
+      - `memory->process[i].pid`: The process ID.
+      - `memory->process[i].tested`: The number of numbers tested.
+      - `memory->process[i].found`: The number of perfect numbers found.
+      - `memory->process[i].skipped`: The number of numbers skipped.
+    - The loop terminates when a process with a PID of 0 is encountered (indicating no more active processes).
+
+5. **Displaying Total Statistics**:
+    - After printing the statistics for each process, the program prints the total number of numbers tested, perfect numbers found, and numbers skipped across all running processes.
+
+#### Error Handling
+
+- **Shared Memory Access**: If `shmget()` or `shmat()` fail to access or attach to the shared memory, an error message is printed, and the program exits.
+- **Message Queue Access**: If `msgget()` fails to access the message queue, an error message is printed, and the program exits.
+- **Kill Signal Failure**: If `msgsnd()` fails to send the kill signal, an error message is printed, and the program exits.
+
+## Usage
+
 ```
-- **Purpose:** These headers include necessary libraries for the program’s functionality:
-  - `stdio.h` and `stdlib.h` for standard I/O and memory allocation.
-  - `string.h` for string manipulation functions.
-  - `unistd.h` for system calls like `getopt()` and `kill()`.
-  - `signal.h` for signal handling.
-  - `sys/ipc.h`, `sys/msg.h`, `sys/sem.h`, `sys/shm.h`, and `sys/types.h` for inter-process communication (IPC), including shared memory, semaphores, and message queues.
-
----
-
-#### Main Function Declaration:
-```c
-int main(int argc, char *argv[])
+./report              # Displays the status of processes and the perfect numbers found
+./report -k           # Sends a termination signal to all active processes
 ```
-- **Purpose:** The main function starts here. It processes command-line arguments and manages inter-process communication to output the shared memory status.
 
----
+- Without any arguments, the program prints the perfect numbers and the statistics of the currently running processes.
+- With the `-k` flag, the program sends a termination signal to all active processes.
 
-#### Variable Initialization:
-```c
-int k_flag = 0;
-int opt = 0;
-int SharedMem_ID;
-int Total_found = 0;
-int Total_tested = 0;
-int Total_skipped = 0;
-int PerfectNumbersDiscoveredCounter = 0;
-SharedMemoryStruct *SharedMem_Struct;
-```
-- **k_flag:** Used to track if the `-k` option (kill signal) is specified.
-- **opt:** Stores the current option parsed by `getopt()`.
-- **SharedMem_ID:** Stores the ID of the shared memory segment.
-- **Total_found, Total_tested, Total_skipped:** Accumulators for the statistics.
-- **PerfectNumbersDiscoveredCounter:** Tracks the count of perfect numbers discovered.
-- **SharedMem_Struct:** Pointer to the shared memory structure.
+## Data Structures
 
----
+### `segment`
 
-#### Argument Parsing with `getopt()`:
-```c
-while ((opt = getopt(argc, argv, "k")) != -1) {
-    switch (opt) {
-        case 'k':
-            k_flag = 1;
-            break;
-        default:
-            fprintf(stderr, "SYNOPSIS: report -k\n");
-            exit(1);
-            break;
-    }
-}
-```
-- **Purpose:** This block processes command-line arguments using `getopt()`:
-  - If the `-k` option is present, it sets `k_flag` to `1` (indicating the need to send a signal to terminate all processes).
-  - If an unknown option is provided, the program prints a synopsis message and exits.
+This structure, defined in `hw4.h`, stores information about the processes and the perfect numbers found. It is accessed through shared memory.
 
----
+- `process[]`: An array that stores information about each process:
+  - `pid`: Process ID of each compute process.
+  - `tested`: Number of numbers tested by the process.
+  - `found`: Number of perfect numbers found by the process.
+  - `skipped`: Number of numbers skipped by the process.
+  
+- `result[]`: An array that stores the perfect numbers found by all compute processes.
 
-#### Shared Memory Setup:
-```c
-if ((SharedMem_ID = shmget(KEY, sizeof(SharedMemoryStruct), IPC_CREAT | 0660)) == -1 |
-    (SharedMem_Struct = (SharedMemoryStruct *)shmat(SharedMem_ID, 0, 0)) == (SharedMemoryStruct *)-1) {
+### `msg`
 
-    fprintf(stderr, "ERROR: Failed to create or attach the shared memory segment\n");
-    exit(1);
-}
-```
-- **Purpose:** This section attaches the program to a shared memory segment:
-  - `shmget()` creates or accesses a shared memory segment using `KEY` and assigns it to `SharedMem_ID`.
-  - `shmat()` attaches the shared memory to the process and casts it to the custom structure `SharedMemoryStruct`.
-  - If either call fails, an error message is printed, and the program exits.
+The `msg` structure, also defined in `hw4.h`, is used for message passing between the `manage.c` program and the compute processes.
 
----
-
-#### Perfect Number Reporting:
-```c
-fprintf(stdout, "Perfect Number Found: ");
-
-for (int i = 0; SharedMem_Struct->PerfectNumber[i] != 0; i++) {
-    fprintf(stdout, "%ld ", SharedMem_Struct->PerfectNumber[i]);
-}
-
-fprintf(stdout, "\n");
-```
-- **Purpose:** This loop prints all the perfect numbers stored in the shared memory segment.
-  - It iterates through the `PerfectNumber` array in the shared memory, printing each non-zero value.
-
----
-
-#### Process Statistics Reporting:
-```c
-for (int i = 0; i < MAX_PROCESSES; i++) {
-
-    if (SharedMem_Struct->PerfectNumber[i] != 0) {
-        PerfectNumbersDiscoveredCounter++;
-    }
-
-    if (SharedMem_Struct->ProcessessStruct[i].pid != 0) {
-        fprintf(stdout, "pid(%d): ", SharedMem_Struct->ProcessessStruct[i].pid);
-        Total_found += SharedMem_Struct->ProcessessStruct[i].FoundCounter;
-        fprintf(stdout, "found: %d, ", SharedMem_Struct->ProcessessStruct[i].FoundCounter);
-        Total_tested += SharedMem_Struct->ProcessessStruct[i].TestedCounter;
-        fprintf(stdout, "tested: %d, ", SharedMem_Struct->ProcessessStruct[i].TestedCounter);
-        Total_skipped += SharedMem_Struct->ProcessessStruct[i].SkippedCounter;
-        fprintf(stdout, "skipped: %d\n", SharedMem_Struct->ProcessessStruct[i].SkippedCounter);
-    }
-}
-```
-- **Purpose:** This loop iterates through the `ProcessessStruct` array to print statistics for each active process:
-  - **Found Counter:** Number of perfect numbers found by the process.
-  - **Tested Counter:** Number of numbers tested by the process.
-  - **Skipped Counter:** Number of skipped numbers.
-  - It accumulates totals for all counters and prints them.
-
----
-
-#### Total Statistics Output:
-```c
-fprintf(stdout, "Statistics:\n");
-fprintf(stdout, "Total found: %d\n", Total_found);
-fprintf(stdout, "Total tested: %d\n", Total_tested);
-fprintf(stdout, "Total skipped: %d\n", Total_skipped);
-```
-- **Purpose:** After processing all processes, the program prints the cumulative statistics for:
-  - Total numbers found.
-  - Total numbers tested.
-  - Total numbers skipped.
-
----
-
-#### Optional Kill Signal (`-k` option):
-```c
-if (k_flag == 1) {
-    kill(SharedMem_Struct->manage_PID, SIGHUP);
-}
-```
-- **Purpose:** If the `-k` option was specified, this section sends a `SIGHUP` signal to the process managing the shared memory (`manage_PID`), instructing it to terminate gracefully.
-
----
-
-#### Program Exit:
-```c
-return 0;
-```
-- **Purpose:** The program terminates successfully after completing its operations.
-
----
-
-### Overall Purpose:
-This program is designed to report statistics on perfect numbers and process activity stored in a shared memory segment. If the `-k` option is provided, it sends a signal to the process managing the shared memory, requesting termination.
+- `flag`: Indicates the type of message (e.g., `KILL_FLAG`).
+- `data`: Carries additional data (e.g., process ID or index).
